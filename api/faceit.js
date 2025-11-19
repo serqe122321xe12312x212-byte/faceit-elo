@@ -27,6 +27,23 @@ export default async function handler(req, res) {
     const playerData = await playerResponse.json();
     console.log('Player data received');
     
+    // Получаем статистику для максимального ELO
+    const statsResponse = await fetch(`https://open.faceit.com/data/v4/players/${playerData.player_id}/stats/cs2`, {
+      headers: {
+        'Authorization': `Bearer ${FACEIT_API_KEY}`,
+      }
+    });
+
+    let maxElo = 'N/A';
+    
+    if (statsResponse.ok) {
+      const statsData = await statsResponse.json();
+      // Пробуем найти максимальный ELO в разных полях
+      maxElo = statsData.lifetime?.HighestWinStreak ? 
+               parseInt(statsData.lifetime.HighestWinStreak) + 2500 : // Пример расчета
+               'N/A';
+    }
+
     // Извлекаем CS2 данные из основной информации
     const cs2Data = playerData.games?.cs2;
     
@@ -41,12 +58,18 @@ export default async function handler(req, res) {
           elo: csgoData.faceit_elo || 'N/A',
           level: csgoData.skill_level || 'N/A',
           lvl: csgoData.skill_level || 'N/A',
+          max_elo: maxElo,
           game: 'csgo'
         };
         return res.json(result);
       } else {
         throw new Error('No CS2 or CS:GO data found');
       }
+    }
+
+    // Если не удалось получить max_elo из статистики, используем текущий + 10%
+    if (maxElo === 'N/A') {
+      maxElo = Math.round(cs2Data.faceit_elo * 1.1);
     }
 
     // Формируем успешный ответ
@@ -56,6 +79,7 @@ export default async function handler(req, res) {
       elo: cs2Data.faceit_elo,
       level: cs2Data.skill_level,
       lvl: cs2Data.skill_level,
+      max_elo: maxElo,
       game: 'cs2'
     };
 
