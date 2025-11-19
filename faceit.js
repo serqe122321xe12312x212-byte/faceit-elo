@@ -1,50 +1,69 @@
-export default async function handler(request, response) {
-  const { nick } = request.query;
+export default async function handler(req, res) {
+  const { nick } = req.query;
   
+  // Разрешаем CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'application/json');
+
   if (!nick) {
-    return response.json({ error: true, message: 'No nickname provided' });
+    return res.json({ error: true, message: 'No nickname provided' });
   }
 
   try {
-    // Парсим страницу Faceit для получения данных
-    const html = await fetch(`https://www.faceit.com/ru/players/${nick}`).then(r => r.text());
+    const FACEIT_API_KEY = '227c9db1-b1b6-4b67-b7dc-0a5fc406ccb2';
     
-    // Ищем данные в HTML
-    const eloMatch = html.match(/"elo":(\d+)/);
-    const levelMatch = html.match(/"skillLevel":(\d+)/);
-    const nicknameMatch = html.match(/"nickname":"([^"]+)"/);
+    // 1. Получаем данные игрока
+    const playerResponse = await fetch(`https://open.faceit.com/data/v4/players?nickname=${nick}`, {
+      headers: {
+        'Authorization': `Bearer ${FACEIT_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    if (eloMatch && levelMatch) {
-      return response.json({
-        error: false,
-        nickname: nicknameMatch ? nicknameMatch[1] : nick,
-        elo: eloMatch[1],
-        level: levelMatch[1],
-        lvl: levelMatch[1]
-      });
-    } else {
-      // Альтернативный поиск
-      const scriptMatch = html.match(/window\.__APOLLO_STATE__ = ({[^;]+})/);
-      if (scriptMatch) {
-        const data = JSON.parse(scriptMatch[1]);
-        const playerKey = Object.keys(data).find(key => key.includes('Player'));
-        if (playerKey && data[playerKey]) {
-          return response.json({
-            error: false,
-            nickname: nick,
-            elo: data[playerKey].games?.cs2?.faceitElo || 'N/A',
-            level: data[playerKey].games?.cs2?.skillLevel || 'N/A',
-            lvl: data[playerKey].games?.cs2?.skillLevel || 'N/A'
-          });
+    if (!playerResponse.ok) {
+      throw new Error('Player not found');
+    }
+
+    const playerData = await playerResponse.json();
+    
+    // 2. Получаем CS2 статистику
+    const statsResponse = await fetch(`https://open.faceit.com/data/v4/players/${playerData.player_id}/games/cs2`, {
+      headers: {
+        'Authorization': `Bearer ${FACEIT_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!statsResponse.ok) {
+      throw new Error('CS2 stats not found');
+    }
+
+    const statsData = await statsResponse.json();
+
+    // 3. Формируем ответ
+    const result = {
+      error: false,
+      nickname: playerData.nickname,
+      player_id: playerData.player_id,
+      elo: statsData.faceit_elo,
+      level: statsData.skill_level,
+      lvl: statsData.skill_level,
+      stats: {
+        lifetime: {
+          Wins: statsData.lifetime?.Wins || 0,
+          Matches: statsData.lifetime?.Matches || 0,
+          'Win Rate %': statsData.lifetime?.['Win Rate %'] || 0
         }
       }
-      throw new Error('Player data not found');
-    }
+    };
+
+    return res.json(result);
     
   } catch (error) {
-    return response.json({
+    console.error('API Error:', error);
+    return res.json({
       error: true,
-      message: 'Player not found or API error: ' + error.message
+      message: error.message || 'Unknown error'
     });
   }
 }
